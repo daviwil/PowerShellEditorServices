@@ -15,12 +15,10 @@ namespace Microsoft.PowerShell.EditorServices.Session
 
         void PauseDebugger(Runspace runspace);
 
-        IEnumerable<TResult> ExecuteCommandInDebugger<TResult>(
+        ExecutionResult ExecuteCommandInDebugger(
             PowerShellContext powerShellContext,
             Runspace currentRunspace,
-            PSCommand psCommand,
-            bool sendOutputToHost,
-            out DebuggerResumeAction? debuggerResumeAction);
+            ExecutionRequest executionRequest);
     }
 }
 

@@ -29,18 +29,16 @@ namespace Microsoft.PowerShell.EditorServices.Session
             throw new NotSupportedException("Debugger cannot be paused in PowerShell v4");
         }
 
-        public IEnumerable<TResult> ExecuteCommandInDebugger<TResult>(
+        public ExecutionResult ExecuteCommandInDebugger(
             PowerShellContext powerShellContext,
             Runspace currentRunspace,
-            PSCommand psCommand,
-            bool sendOutputToHost,
-            out DebuggerResumeAction? debuggerResumeAction)
+            ExecutionRequest executionRequest)
         {
-            debuggerResumeAction = null;
+            ExecutionResult executionResult = new ExecutionResult(executionRequest);
             PSDataCollection<PSObject> outputCollection = new PSDataCollection<PSObject>();
 
 #if !PowerShellv3
-            if (sendOutputToHost)
+            if (executionRequest.Options.WriteOutputToHost)
             {
                 outputCollection.DataAdded +=
                     (obj, e) =>
@@ -56,28 +54,14 @@ namespace Microsoft.PowerShell.EditorServices.Session
 
             DebuggerCommandResults commandResults =
                 currentRunspace.Debugger.ProcessCommand(
-                    psCommand,
+                    executionRequest.Command,
                     outputCollection);
-
-            // Pass along the debugger's resume action if the user's
-            // command caused one to be returned
-            debuggerResumeAction = commandResults.ResumeAction;
 #endif
 
-            IEnumerable<TResult> results = null;
-            if (typeof(TResult) != typeof(PSObject))
-            {
-                results =
-                    outputCollection
-                        .Select(pso => pso.BaseObject)
-                        .Cast<TResult>();
-            }
-            else
-            {
-                results = outputCollection.Cast<TResult>();
-            }
+            executionResult.SetOutput(outputCollection);
+            executionResult.DebuggerAction = commandResults.ResumeAction;
 
-            return results;
+            return executionResult;
         }
     }
 }

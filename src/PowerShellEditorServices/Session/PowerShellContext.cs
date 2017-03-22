@@ -46,8 +46,8 @@ namespace Microsoft.PowerShell.EditorServices
 
         private int pipelineThreadId;
         private TaskCompletionSource<DebuggerResumeAction> debuggerStoppedTask;
-        private TaskCompletionSource<IPipelineExecutionRequest> pipelineExecutionTask;
-        private TaskCompletionSource<IPipelineExecutionRequest> pipelineResultTask;
+        private TaskCompletionSource<ExecutionRequest> pipelineExecutionTask;
+        private TaskCompletionSource<ExecutionResult> pipelineResultTask;
 
         private object runspaceMutex = new object();
         private AsyncQueue<RunspaceHandle> runspaceWaitQueue = new AsyncQueue<RunspaceHandle>();
@@ -373,15 +373,61 @@ namespace Microsoft.PowerShell.EditorServices
         /// An awaitable Task which will provide results once the command
         /// execution completes.
         /// </returns>
-        public async Task<IEnumerable<TResult>> ExecuteCommand<TResult>(
+        public Task<IEnumerable<TResult>> ExecuteCommand<TResult>(
             PSCommand psCommand,
             StringBuilder errorMessages,
             bool sendOutputToHost = false,
             bool sendErrorToHost = true,
             bool addToHistory = false)
         {
+            return
+                this.ExecuteCommand<TResult>(
+                    psCommand,
+                    new ExecutionRequestOptions
+                    {
+                        WriteOutputToHost = sendOutputToHost,
+                        WriteErrorsToHost = sendErrorToHost,
+                        AddToHistory = addToHistory
+                    });
+        }
+
+        /// <summary>
+        /// Executes a PSCommand against the session's runspace and returns
+        /// a collection of results of the expected type.
+        /// </summary>
+        /// <typeparam name="TResult">The expected result type.</typeparam>
+        /// <param name="psCommand">The PSCommand to be executed.</param>
+        /// <returns>
+        /// An awaitable Task which will provide results once the command
+        /// execution completes.
+        /// </returns>
+        public async Task<IEnumerable<TResult>> ExecuteCommand<TResult>(
+            PSCommand psCommand,
+            ExecutionRequestOptions executionOptions)
+        {
+            ExecutionResult executionResult = 
+                await this.ExecuteAsync(
+                    new ExecutionRequest(
+                        psCommand,
+                        executionOptions));
+
+            return await executionResult.GetResultOfTypeAsync<TResult>();
+        }
+
+        /// <summary>
+        /// Executes a PSCommand against the session's runspace and returns
+        /// a collection of results of the expected type.
+        /// </summary>
+        /// <typeparam name="TResult">The expected result type.</typeparam>
+        /// <param name="psCommand">The PSCommand to be executed.</param>
+        /// <returns>
+        /// An awaitable Task which will provide results once the command
+        /// execution completes.
+        /// </returns>
+        public async Task<ExecutionResult> ExecuteAsync(ExecutionRequest executionRequest)
+        {
             RunspaceHandle runspaceHandle = null;
-            IEnumerable<TResult> executionResult = Enumerable.Empty<TResult>();
+            ExecutionResult executionResult = null;
 
             // If the debugger is active and the caller isn't on the pipeline
             // thread, send the command over to that thread to be executed.
@@ -390,23 +436,20 @@ namespace Microsoft.PowerShell.EditorServices
             {
                 Logger.Write(LogLevel.Verbose, "Passing command execution to pipeline thread.");
 
-                PipelineExecutionRequest<TResult> executionRequest =
-                    new PipelineExecutionRequest<TResult>(
-                        this, psCommand, errorMessages, sendOutputToHost);
-
-                // Send the pipeline execution request to the pipeline thread
-                this.pipelineResultTask = new TaskCompletionSource<IPipelineExecutionRequest>();
+                // Send the execution request to the pipeline thread
+                this.pipelineResultTask = new TaskCompletionSource<ExecutionResult>();
                 this.pipelineExecutionTask.SetResult(executionRequest);
 
-                await this.pipelineResultTask.Task;
-                return executionRequest.Results;
+                return await this.pipelineResultTask.Task;
             }
             else
             {
                 try
                 {
                     // Instruct PowerShell to send output and errors to the host
-                    if (sendOutputToHost)
+                    PSCommand psCommand = executionRequest.Command;
+
+                    if (executionRequest.Options.WriteOutputToHost)
                     {
                         psCommand.Commands[0].MergeMyResults(
                             PipelineResultTypes.Error,
@@ -420,10 +463,7 @@ namespace Microsoft.PowerShell.EditorServices
                     if (this.CurrentRunspace.Runspace.RunspaceAvailability == RunspaceAvailability.AvailableForNestedCommand ||
                         this.debuggerStoppedTask != null)
                     {
-                        executionResult =
-                            this.ExecuteCommandInDebugger<TResult>(
-                                psCommand,
-                                sendOutputToHost);
+                        executionResult = this.ExecuteInDebugger(executionRequest);
                     }
                     else
                     {
@@ -440,36 +480,33 @@ namespace Microsoft.PowerShell.EditorServices
                             this.powerShell.Runspace = runspaceHandle.Runspace;
                         }
 
+                        executionResult = new ExecutionResult(executionRequest);
+
                         // Invoke the pipeline on a background thread
                         // TODO: Use built-in async invocation!
-                        executionResult =
-                            await Task.Factory.StartNew<IEnumerable<TResult>>(
-                                () =>
+                        await Task.Factory.StartNew(
+                            () =>
+                            {
+
+                                try
                                 {
-                                    Collection<TResult> result = null;
-                                    try
+                                    this.powerShell.Commands = psCommand;
+                                    var results = this.powerShell.Invoke();
+                                    executionResult.SetOutput(results);
+                                }
+                                catch (RemoteException e)
+                                {
+                                    if (!e.SerializedRemoteException.TypeNames[0].EndsWith("PipelineStoppedException"))
                                     {
-                                        this.powerShell.Commands = psCommand;
-
-                                        PSInvocationSettings invocationSettings = new PSInvocationSettings();
-                                        invocationSettings.AddToHistory = addToHistory;
-                                        result = this.powerShell.Invoke<TResult>(null, invocationSettings);
+                                        // Rethrow anything that isn't a PipelineStoppedException
+                                        throw e;
                                     }
-                                    catch (RemoteException e)
-                                    {
-                                        if (!e.SerializedRemoteException.TypeNames[0].EndsWith("PipelineStoppedException"))
-                                        {
-                                            // Rethrow anything that isn't a PipelineStoppedException
-                                            throw e;
-                                        }
-                                    }
-
-                                    return result;
-                                },
-                                CancellationToken.None, // Might need a cancellation token
-                                TaskCreationOptions.None,
-                                TaskScheduler.Default
-                            );
+                                }
+                            },
+                            CancellationToken.None, // Might need a cancellation token
+                            TaskCreationOptions.None,
+                            TaskScheduler.Default
+                        );
 
                         if (this.powerShell.HadErrors)
                         {
@@ -480,7 +517,7 @@ namespace Microsoft.PowerShell.EditorServices
                                 errorMessage += error.ToString() + "\r\n";
                             }
 
-                            errorMessages?.Append(errorMessage);
+                            executionResult.Errors.Append(errorMessage);
                             Logger.Write(LogLevel.Error, errorMessage);
                         }
                         else
@@ -497,9 +534,11 @@ namespace Microsoft.PowerShell.EditorServices
                 {
                     Logger.Write(
                         LogLevel.Error,
-                        "Popeline stopped while executing command:\r\n\r\n" + e.ToString());
+                        "Pipeline stopped while executing command:\r\n\r\n" + e.ToString());
 
-                    errorMessages?.Append(e.Message);
+                    executionResult = new ExecutionResult(executionRequest);
+                    executionResult.SetOutput(Enumerable.Empty<PSObject>());
+                    executionResult.Errors.Append(e.Message);
                 }
                 catch (RuntimeException e)
                 {
@@ -507,9 +546,11 @@ namespace Microsoft.PowerShell.EditorServices
                         LogLevel.Error,
                         "Runtime exception occurred while executing command:\r\n\r\n" + e.ToString());
 
-                    errorMessages?.Append(e.Message);
+                    executionResult = new ExecutionResult(executionRequest);
+                    executionResult.SetOutput(Enumerable.Empty<PSObject>());
+                    executionResult.Errors.Append(e.Message);
 
-                    if (sendErrorToHost)
+                    if (executionRequest.Options.WriteErrorsToHost)
                     {
                         // Write the error to the host
                         this.WriteExceptionToHost(e);
@@ -518,7 +559,7 @@ namespace Microsoft.PowerShell.EditorServices
                 finally
                 {
                     // Get the new prompt before releasing the runspace handle
-                    if (sendOutputToHost)
+                    if (executionRequest.Options.WriteOutputToHost)
                     {
                         SessionDetails sessionDetails = null;
 
@@ -1083,27 +1124,40 @@ namespace Microsoft.PowerShell.EditorServices
 
         private IEnumerable<TResult> ExecuteCommandInDebugger<TResult>(PSCommand psCommand, bool sendOutputToHost)
         {
+            ExecutionResult executionResult =
+                this.ExecuteInDebugger(
+                    new ExecutionRequest(
+                        psCommand,
+                        new ExecutionRequestOptions
+                        {
+                            WriteOutputToHost = sendOutputToHost,
+                            WriteErrorsToHost = sendOutputToHost
+                        }));
+
+            return executionResult.GetResultOfType<TResult>();
+        }
+
+        private ExecutionResult ExecuteInDebugger(ExecutionRequest executionRequest)
+        {
             Logger.Write(
                 LogLevel.Verbose,
                 string.Format(
                     "Attempting to execute command(s) in the debugger:\r\n\r\n{0}",
-                    GetStringForPSCommand(psCommand)));
+                    GetStringForPSCommand(executionRequest.Command)));
 
-            IEnumerable<TResult> output =
-                this.versionSpecificOperations.ExecuteCommandInDebugger<TResult>(
+            ExecutionResult executionResult =
+                this.versionSpecificOperations.ExecuteCommandInDebugger(
                     this,
                     this.CurrentRunspace.Runspace,
-                    psCommand,
-                    sendOutputToHost,
-                    out DebuggerResumeAction? debuggerResumeAction);
+                    executionRequest);
 
-            if (debuggerResumeAction.HasValue)
+            if (executionResult.DebuggerAction.HasValue)
             {
                 // Resume the debugger with the specificed action
-                this.ResumeDebugger(debuggerResumeAction.Value);
+                this.ResumeDebugger(executionResult.DebuggerAction.Value);
             }
 
-            return output;
+            return executionResult;
         }
 
         internal void WriteOutput(string outputString, bool includeNewLine)
@@ -1511,11 +1565,11 @@ namespace Microsoft.PowerShell.EditorServices
 
             // Save the pipeline thread ID and create the pipeline execution task
             this.pipelineThreadId = Thread.CurrentThread.ManagedThreadId;
-            this.pipelineExecutionTask = new TaskCompletionSource<IPipelineExecutionRequest>();
+            this.pipelineExecutionTask = new TaskCompletionSource<ExecutionRequest>();
 
             // Hold on to local task vars so that the fields can be cleared independently
             Task<DebuggerResumeAction> localDebuggerStoppedTask = this.debuggerStoppedTask.Task;
-            Task<IPipelineExecutionRequest> localPipelineExecutionTask = this.pipelineExecutionTask.Task;
+            Task<ExecutionRequest> localPipelineExecutionTask = this.pipelineExecutionTask.Task;
 
             // Update the session state
             this.OnSessionStateChanged(
@@ -1579,16 +1633,16 @@ namespace Microsoft.PowerShell.EditorServices
                 {
                     Logger.Write(LogLevel.Verbose, "Received pipeline thread execution request.");
 
-                    IPipelineExecutionRequest executionRequest = localPipelineExecutionTask.Result;
+                    ExecutionRequest executionRequest = localPipelineExecutionTask.Result;
 
-                    this.pipelineExecutionTask = new TaskCompletionSource<IPipelineExecutionRequest>();
+                    this.pipelineExecutionTask = new TaskCompletionSource<ExecutionRequest>();
                     localPipelineExecutionTask = this.pipelineExecutionTask.Task;
 
-                    executionRequest.Execute().Wait();
+                    ExecutionResult executionResult = this.ExecuteAsync(executionRequest).Result;
 
                     Logger.Write(LogLevel.Verbose, "Pipeline thread execution completed.");
 
-                    this.pipelineResultTask.SetResult(executionRequest);
+                    this.pipelineResultTask.SetResult(executionResult);
 
                     if (this.CurrentRunspace.Runspace.RunspaceAvailability == RunspaceAvailability.Available)
                     {

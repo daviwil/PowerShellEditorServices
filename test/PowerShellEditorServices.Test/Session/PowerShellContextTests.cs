@@ -54,6 +54,17 @@ namespace Microsoft.PowerShell.EditorServices.Test.Console
         }
 
         [Fact]
+        public async Task TestNewExecuteModel()
+        {
+            IEnumerable<PSObject> output =
+                await this.powerShellContext.ExecuteCommand<PSObject>(
+                    new PSCommand().AddCommand("Get-Process"),
+                    new ExecutionRequestOptions { WriteOutputToHost = false });
+
+            Assert.NotEmpty(output);
+        }
+
+        [Fact]
         public async Task CanExecutePSCommand()
         {
             PSCommand psCommand = new PSCommand();

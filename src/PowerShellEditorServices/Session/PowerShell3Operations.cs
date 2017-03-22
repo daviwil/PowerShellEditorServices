@@ -24,48 +24,31 @@ namespace Microsoft.PowerShell.EditorServices.Session
             throw new NotSupportedException("Debugger cannot be paused in PowerShell v3");
         }
 
-        public IEnumerable<TResult> ExecuteCommandInDebugger<TResult>(
+        public ExecutionResult ExecuteCommandInDebugger(
             PowerShellContext powerShellContext,
             Runspace currentRunspace,
-            PSCommand psCommand,
-            bool sendOutputToHost,
-            out DebuggerResumeAction? debuggerResumeAction)
+            ExecutionRequest executionRequest)
         {
-            IEnumerable<TResult> executionResult = null;
+            ExecutionResult executionResult = new ExecutionResult(executionRequest);
 
             using (var nestedPipeline = currentRunspace.CreateNestedPipeline())
             {
-                foreach (var command in psCommand.Commands)
+                foreach (var command in executionRequest.Command.Commands)
                 {
                     nestedPipeline.Commands.Add(command);
                 }
 
-                var results = nestedPipeline.Invoke();
-
-                if (typeof(TResult) != typeof(PSObject))
-                {
-                    executionResult =
-                        results
-                            .Select(pso => pso.BaseObject)
-                            .Cast<TResult>();
-                }
-                else
-                {
-                    executionResult = results.Cast<TResult>();
-                }
+                executionResult.SetOutput(nestedPipeline.Invoke());
             }
 
             // Write the output to the host if necessary
-            if (sendOutputToHost)
+            if (executionRequest.Options.WriteOutputToHost)
             {
-                foreach (var line in executionResult)
+                foreach (var line in executionResult.Result)
                 {
                     powerShellContext.WriteOutput(line.ToString(), true);
                 }
             }
-
-            // No DebuggerResumeAction result for PowerShell v3
-            debuggerResumeAction = null;
 
             return executionResult;
         }
