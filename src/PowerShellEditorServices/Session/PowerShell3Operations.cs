@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
@@ -29,7 +30,7 @@ namespace Microsoft.PowerShell.EditorServices.Session
             Runspace currentRunspace,
             ExecutionRequest executionRequest)
         {
-            ExecutionResult executionResult = new ExecutionResult(executionRequest);
+            Collection<PSObject> output = null;
 
             using (var nestedPipeline = currentRunspace.CreateNestedPipeline())
             {
@@ -38,17 +39,19 @@ namespace Microsoft.PowerShell.EditorServices.Session
                     nestedPipeline.Commands.Add(command);
                 }
 
-                executionResult.SetOutput(nestedPipeline.Invoke());
+                output = nestedPipeline.Invoke();
             }
 
             // Write the output to the host if necessary
-            if (executionRequest.Options.WriteOutputToHost)
+            if (executionRequest.Options.WriteOutputToHost && output != null)
             {
-                foreach (var line in executionResult.Result)
+                foreach (var line in output)
                 {
                     powerShellContext.WriteOutput(line.ToString(), true);
                 }
             }
+
+            executionRequest.Result.SetOutput(output);
 
             return executionResult;
         }

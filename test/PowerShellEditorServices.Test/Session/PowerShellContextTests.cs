@@ -62,6 +62,21 @@ namespace Microsoft.PowerShell.EditorServices.Test.Console
                     new ExecutionRequestOptions { WriteOutputToHost = false });
 
             Assert.NotEmpty(output);
+
+            //this.powerShellContext.ExecuteAsync()
+
+            // NOTES:
+            // - Who will use sync execution?  Nobody, really.
+            // - Two types of method:
+            //   - Execute, returns ExecutionRequest that can either be ignored or awaited internally
+            //     - Used by REPL loop to execute and watch state of command
+            //   - ExecuteWithOutputAsync, returns Task<IEnumerable<T>> which can be awaited purely for output
+            //     - Used by existing ExecuteCommand methods
+
+            // POSSIBLE CHANGE:
+            // - Take only ExecutionOptions
+            // - Add execution state event, or args which contain the current options
+            // - Don't do all the new changes...
         }
 
         [Fact]

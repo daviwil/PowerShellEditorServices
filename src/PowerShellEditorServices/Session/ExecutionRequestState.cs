@@ -12,9 +12,9 @@ namespace Microsoft.PowerShell.EditorServices
     public enum ExecutionRequestState 
     {
         /// <summary>
-        /// Indicates that execution is not yet finished.
+        /// Indicates that execution has not completed yet.
         /// </summary>
-        NotFinished,
+        Pending,
 
         /// <summary>
         /// Indicates that execution has failed.

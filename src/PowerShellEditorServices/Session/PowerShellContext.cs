@@ -411,7 +411,7 @@ namespace Microsoft.PowerShell.EditorServices
                         psCommand,
                         executionOptions));
 
-            return await executionResult.GetResultOfTypeAsync<TResult>();
+            return await executionResult.GetOutputOfTypeAsync<TResult>();
         }
 
         /// <summary>
@@ -1118,6 +1118,15 @@ namespace Microsoft.PowerShell.EditorServices
             this.RunspaceChanged?.Invoke(sender, e);
         }
 
+        // NOTE: This event is 'internal' because the DebugService provides
+        //       the publicly consumable event.
+        internal event EventHandler<DebuggerStopEventArgs> DebuggerStop;
+
+        /// <summary>
+        /// Raised when the debugger is resumed after it was previously stopped.
+        /// </summary>
+        public event EventHandler<DebuggerResumeAction> DebuggerResumed;
+
         #endregion
 
         #region Private Methods
@@ -1134,7 +1143,7 @@ namespace Microsoft.PowerShell.EditorServices
                             WriteErrorsToHost = sendOutputToHost
                         }));
 
-            return executionResult.GetResultOfType<TResult>();
+            return executionResult.GetOutputOfType<TResult>();
         }
 
         private ExecutionResult ExecuteInDebugger(ExecutionRequest executionRequest)
@@ -1542,19 +1551,6 @@ namespace Microsoft.PowerShell.EditorServices
             }
         }
 
-        #endregion
-
-        #region Events
-
-        // NOTE: This event is 'internal' because the DebugService provides
-        //       the publicly consumable event.
-        internal event EventHandler<DebuggerStopEventArgs> DebuggerStop;
-
-        /// <summary>
-        /// Raised when the debugger is resumed after it was previously stopped.
-        /// </summary>
-        public event EventHandler<DebuggerResumeAction> DebuggerResumed;
-
         private void OnDebuggerStop(object sender, DebuggerStopEventArgs e)
         {
             Logger.Write(LogLevel.Verbose, "Debugger stopped execution.");
@@ -1678,53 +1674,6 @@ namespace Microsoft.PowerShell.EditorServices
         private void OnBreakpointUpdated(object sender, BreakpointUpdatedEventArgs e)
         {
             this.BreakpointUpdated?.Invoke(sender, e);
-        }
-
-        #endregion
-
-        #region Nested Classes
-
-        private interface IPipelineExecutionRequest
-        {
-            Task Execute();
-        }
-
-        /// <summary>
-        /// Contains details relating to a request to execute a
-        /// command on the PowerShell pipeline thread.
-        /// </summary>
-        /// <typeparam name="TResult">The expected result type of the execution.</typeparam>
-        private class PipelineExecutionRequest<TResult> : IPipelineExecutionRequest
-        {
-            PowerShellContext powerShellContext;
-            PSCommand psCommand;
-            StringBuilder errorMessages;
-            bool sendOutputToHost;
-
-            public IEnumerable<TResult> Results { get; private set; }
-
-            public PipelineExecutionRequest(
-                PowerShellContext powerShellContext,
-                PSCommand psCommand,
-                StringBuilder errorMessages,
-                bool sendOutputToHost)
-            {
-                this.powerShellContext = powerShellContext;
-                this.psCommand = psCommand;
-                this.errorMessages = errorMessages;
-                this.sendOutputToHost = sendOutputToHost;
-            }
-
-            public async Task Execute()
-            {
-                this.Results =
-                    await this.powerShellContext.ExecuteCommand<TResult>(
-                        psCommand,
-                        errorMessages,
-                        sendOutputToHost);
-
-                // TODO: Deal with errors?
-            }
         }
 
         private void ConfigureRunspaceCapabilities(RunspaceDetails runspaceDetails)

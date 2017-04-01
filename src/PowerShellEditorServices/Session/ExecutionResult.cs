@@ -3,7 +3,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 //
 
-using Microsoft.PowerShell.EditorServices.Utility;
 using System.Collections.Generic;
 using System.Management.Automation;
 using System.Linq;
@@ -23,13 +22,7 @@ namespace Microsoft.PowerShell.EditorServices
 
         #region Public Properties
 
-        public ExecutionRequest Request { get; private set; }
-
-        public ExecutionRequestState State { get; internal set; }
-
-        public IEnumerable<PSObject> Result { get; private set; }
-
-        public Task<IEnumerable<PSObject>> ResultAsync { get { return this.resultTask.Task;  } }
+        public IEnumerable<PSObject> Output { get; private set; }
 
         public DebuggerResumeAction? DebuggerAction { get; internal set; }
 
@@ -39,9 +32,8 @@ namespace Microsoft.PowerShell.EditorServices
 
         #region Constructors
 
-        public ExecutionResult(ExecutionRequest executionRequest)
+        internal ExecutionResult()
         {
-            this.Request = executionRequest;
             this.Errors = new StringBuilder();
         }
 
@@ -49,23 +41,22 @@ namespace Microsoft.PowerShell.EditorServices
 
         #region Public Methods
 
-        public IEnumerable<TResult> GetResultOfType<TResult>()
+        public IEnumerable<TResult> GetOutputOfType<TResult>()
         {
-            return this.CastOutput<TResult>(this.Result);
+            return this.CastOutput<TResult>(this.Output);
         }
 
-        public async Task<IEnumerable<TResult>> GetResultOfTypeAsync<TResult>()
+        public async Task<IEnumerable<TResult>> GetOutputOfTypeAsync<TResult>()
         {
-            var output = await this.ResultAsync;
+            var output = await this.resultTask.Task;
 
             return this.CastOutput<TResult>(output);
         }
 
         internal void SetOutput(IEnumerable<PSObject> output)
         {
-            // TODO: Resolve task
             this.resultTask.TrySetResult(output);
-            this.Result = output;
+            this.Output = output;
         }
 
         #endregion
