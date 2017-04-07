@@ -80,6 +80,7 @@ namespace Microsoft.PowerShell.EditorServices.Console
             this.powerShellContext.DebuggerStop += PowerShellContext_DebuggerStop;
             this.powerShellContext.DebuggerResumed += PowerShellContext_DebuggerResumed;
             this.powerShellContext.ExecutionStatusChanged += PowerShellContext_ExecutionStatusChanged;
+            this.powerShellContext.SessionStateChanged += PowerShellContext_SessionStateChanged;
 
             // Set the default prompt handler factory or create
             // a default if one is not provided
@@ -94,6 +95,18 @@ namespace Microsoft.PowerShell.EditorServices.Console
 
             this.consoleReadLine = new ConsoleReadLine(powerShellContext);
 
+        }
+
+        private void PowerShellContext_SessionStateChanged(object sender, SessionStateChangedEventArgs e)
+        {
+            if (e.NewSessionState == PowerShellContextState.Aborting)
+            {
+                // If the session is aborting and there's an active prompt, cancel it
+                if (this.activePromptHandler != null)
+                {
+                    this.activePromptHandler.CancelPrompt();
+                }
+            }
         }
 
         #endregion
