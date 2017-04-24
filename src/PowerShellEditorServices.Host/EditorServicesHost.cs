@@ -35,6 +35,7 @@ namespace Microsoft.PowerShell.EditorServices.Host
         private string bundledModulesPath;
         private DebugAdapter debugAdapter;
         private HashSet<string> featureFlags;
+        private FeatureManager featureManager;
         private LanguageServer languageServer;
 
         #endregion

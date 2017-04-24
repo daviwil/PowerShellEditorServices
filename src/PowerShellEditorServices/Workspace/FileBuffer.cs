@@ -14,56 +14,17 @@ using System.Management.Automation.Language;
 namespace Microsoft.PowerShell.EditorServices
 {
     /// <summary>
-    /// Contains the details and contents of an open script file.
+    /// Contains contents of an open file and allows for easy
+    /// manipulation of those contents.
     /// </summary>
-    public class ScriptFile
+    public class FileBuffer
     {
-        #region Private Fields
-
-        private Token[] scriptTokens;
-        private Version powerShellVersion;
-
-        #endregion
-
         #region Properties
-
-        /// <summary>
-        /// Gets a unique string that identifies this file.  At this time,
-        /// this property returns a normalized version of the value stored
-        /// in the FilePath property.
-        /// </summary>
-        public string Id
-        {
-            get { return this.FilePath.ToLower(); }
-        }
-
-        /// <summary>
-        /// Gets the path at which this file resides.
-        /// </summary>
-        public string FilePath { get; private set; }
-
-        /// <summary>
-        /// Gets the path which the editor client uses to identify this file.
-        /// </summary>
-        public string ClientFilePath { get; private set; }
-
-        /// <summary>
-        /// Gets or sets a boolean that determines whether
-        /// semantic analysis should be enabled for this file.
-        /// For internal use only.
-        /// </summary>
-        internal bool IsAnalysisEnabled { get; set; }
-
-        /// <summary>
-        /// Gets a boolean that determines whether this file is
-        /// in-memory or not (either unsaved or non-file content).
-        /// </summary>
-        public bool IsInMemory { get; private set; }
 
         /// <summary>
         /// Gets a string containing the full contents of the file.
         /// </summary>
-        public string Contents 
+        public string Contents
         {
             get
             {
@@ -75,48 +36,12 @@ namespace Microsoft.PowerShell.EditorServices
         /// Gets a BufferRange that represents the entire content
         /// range of the file.
         /// </summary>
-        public BufferRange FileRange { get; private set; }
-
-        /// <summary>
-        /// Gets the list of syntax markers found by parsing this
-        /// file's contents.
-        /// </summary>
-        public ScriptFileMarker[] SyntaxMarkers
-        {
-            get;
-            private set;
-        }
+        public BufferRange ContentRange { get; private set; }
 
         /// <summary>
         /// Gets the list of strings for each line of the file.
         /// </summary>
-        internal IList<string> FileLines
-        {
-            get;
-            private set;
-        }
-
-        /// <summary>
-        /// Gets the ScriptBlockAst representing the parsed script contents.
-        /// </summary>
-        public ScriptBlockAst ScriptAst
-        {
-            get;
-            private set;
-        }
-
-        /// <summary>
-        /// Gets the array of Tokens representing the parsed script contents.
-        /// </summary>
-        public Token[] ScriptTokens
-        {
-            get { return this.scriptTokens; }
-        }
-
-        /// <summary>
-        /// Gets the array of filepaths dot sourced in this ScriptFile 
-        /// </summary>
-        public string[] ReferencedFiles
+        internal IList<string> ContentLines
         {
             get;
             private set;
@@ -127,21 +52,12 @@ namespace Microsoft.PowerShell.EditorServices
         #region Constructors
 
         /// <summary>
-        /// Creates a new ScriptFile instance by reading file contents from
+        /// Creates a new FileBuffer instance by reading file contents from
         /// the given TextReader.
         /// </summary>
-        /// <param name="filePath">The path at which the script file resides.</param>
-        /// <param name="clientFilePath">The path which the client uses to identify the file.</param>
         /// <param name="textReader">The TextReader to use for reading the file's contents.</param>
-        /// <param name="powerShellVersion">The version of PowerShell for which the script is being parsed.</param>
-        public ScriptFile(
-            string filePath,
-            string clientFilePath,
-            TextReader textReader,
-            Version powerShellVersion)
+        public FileBuffer(TextReader textReader)
         {
-            this.FilePath = filePath;
-            this.ClientFilePath = clientFilePath;
             this.IsAnalysisEnabled = true;
             this.IsInMemory = Workspace.IsPathInMemory(filePath);
             this.powerShellVersion = powerShellVersion;
@@ -150,13 +66,13 @@ namespace Microsoft.PowerShell.EditorServices
         }
 
         /// <summary>
-        /// Creates a new ScriptFile instance with the specified file contents.
+        /// Creates a new FileBuffer instance with the specified file contents.
         /// </summary>
         /// <param name="filePath">The path at which the script file resides.</param>
         /// <param name="clientFilePath">The path which the client uses to identify the file.</param>
         /// <param name="initialBuffer">The initial contents of the script file.</param>
         /// <param name="powerShellVersion">The version of PowerShell for which the script is being parsed.</param>
-        public ScriptFile(
+        public FileBuffer(
             string filePath,
             string clientFilePath,
             string initialBuffer,
@@ -170,12 +86,12 @@ namespace Microsoft.PowerShell.EditorServices
         }
 
         /// <summary>
-        /// Creates a new ScriptFile instance with the specified filepath.
+        /// Creates a new FileBuffer instance with the specified filepath.
         /// </summary>
         /// <param name="filePath">The path at which the script file resides.</param>
         /// <param name="clientFilePath">The path which the client uses to identify the file.</param>
         /// <param name="powerShellVersion">The version of PowerShell for which the script is being parsed.</param>
-        public ScriptFile(
+        public FileBuffer(
             string filePath,
             string clientFilePath,
             Version powerShellVersion)
@@ -295,21 +211,21 @@ namespace Microsoft.PowerShell.EditorServices
             string[] changeLines = fileChange.InsertString.Split('\n');
 
             // Get the first fragment of the first line
-            string firstLineFragment = 
+            string firstLineFragment =
                 this.FileLines[fileChange.Line - 1]
                     .Substring(0, fileChange.Offset - 1);
 
             // Get the last fragment of the last line
             string endLine = this.FileLines[fileChange.EndLine - 1];
-            string lastLineFragment = 
+            string lastLineFragment =
                 endLine.Substring(
-                    fileChange.EndOffset - 1, 
+                    fileChange.EndOffset - 1,
                     (this.FileLines[fileChange.EndLine - 1].Length - fileChange.EndOffset) + 1);
 
             // Remove the old lines
             for (int i = 0; i <= fileChange.EndLine - fileChange.Line; i++)
             {
-                this.FileLines.RemoveAt(fileChange.Line - 1); 
+                this.FileLines.RemoveAt(fileChange.Line - 1);
             }
 
             // Build and insert the new lines
@@ -354,12 +270,12 @@ namespace Microsoft.PowerShell.EditorServices
 
             int offset = 0;
 
-            for(int i = 0; i < lineNumber; i++)
+            for (int i = 0; i < lineNumber; i++)
             {
                 if (i == lineNumber - 1)
                 {
                     // Subtract 1 to account for 1-based column numbering
-                    offset += columnNumber - 1; 
+                    offset += columnNumber - 1;
                 }
                 else
                 {
@@ -403,7 +319,7 @@ namespace Microsoft.PowerShell.EditorServices
         /// <returns>A new BufferPosition containing the position of the offset.</returns>
         public BufferPosition GetPositionAtOffset(int bufferOffset)
         {
-            BufferRange bufferRange = 
+            BufferRange bufferRange =
                 GetRangeBetweenOffsets(
                     bufferOffset, bufferOffset);
 
@@ -549,7 +465,7 @@ namespace Microsoft.PowerShell.EditorServices
                 var parseError =
                     new ParseError(
                         null,
-                        ex.ErrorRecord.FullyQualifiedErrorId, 
+                        ex.ErrorRecord.FullyQualifiedErrorId,
                         ex.Message);
 
                 parseErrors = new[] { parseError };
@@ -560,14 +476,14 @@ namespace Microsoft.PowerShell.EditorServices
             // Translate parse errors into syntax markers
             this.SyntaxMarkers =
                 parseErrors
-                    .Select(ScriptFileMarker.FromParseError)
+                    .Select(FileBufferMarker.FromParseError)
                     .ToArray();
-            
+
             //Get all dot sourced referenced files and store  them
             this.ReferencedFiles =
                 AstOperations.FindDotSourcedIncludes(this.ScriptAst);
         }
 
-#endregion
+        #endregion
     }
 }
