@@ -16,20 +16,6 @@ namespace Microsoft.PowerShell.EditorServices
     /// </summary>
     public class CommandHelpers
     {
-        private static HashSet<string> NounBlackList =
-            new HashSet<string>
-            {
-                "Module",
-                "Script",
-                "Package",
-                "PackageProvider",
-                "PackageSource",
-                "InstalledModule",
-                "InstalledScript",
-                "ScriptFileInfo",
-                "PSRepository"
-            };
-
         /// <summary>
         /// Gets the CommandInfo instance for a command with a particular name.
         /// </summary>
@@ -42,27 +28,40 @@ namespace Microsoft.PowerShell.EditorServices
         {
             Validate.IsNotNull(nameof(commandName), commandName);
 
-            // Make sure the command's noun isn't blacklisted.  This is
-            // currently necessary to make sure that Get-Command doesn't
-            // load PackageManagement or PowerShellGet because they cause
-            // a major slowdown in IntelliSense.
-            var commandParts = commandName.Split('-');
-            if (commandParts.Length == 2 && NounBlackList.Contains(commandParts[1]))
+            CommandInfo commandInfo = null;
+
+            if (powerShellContext.CurrentRunspace.Location == Session.RunspaceLocation.Local &&
+                powerShellContext.CurrentRunspace.Context == Session.RunspaceContext.Original)
             {
-                return null;
+                // When running locally, use InvokeCommand to get the command info so that
+                // the command's module isn't auto-loaded
+                using (RunspaceHandle runspaceHandle = await powerShellContext.GetRunspaceHandle())
+                {
+                    commandInfo =
+                        runspaceHandle.Runspace.SessionStateProxy.InvokeCommand.GetCommand(
+                            commandName,
+                                CommandTypes.Cmdlet |
+                                CommandTypes.Function |
+                                CommandTypes.Alias);
+                }
+            }
+            else
+            {
+                // For remote sessions (or attaching to a process) use Get-Command
+                PSCommand command = new PSCommand();
+                command.AddCommand(@"Microsoft.PowerShell.Core\Get-Command");
+                command.AddArgument(commandName);
+                command.AddParameter("ErrorAction", "Ignore");
+
+                commandInfo =
+                    (await powerShellContext
+                        .ExecuteCommand<PSObject>(command, false, false))
+                        .Select(o => o.BaseObject)
+                        .OfType<CommandInfo>()
+                        .FirstOrDefault();
             }
 
-            PSCommand command = new PSCommand();
-            command.AddCommand(@"Microsoft.PowerShell.Core\Get-Command");
-            command.AddArgument(commandName);
-            command.AddParameter("ErrorAction", "Ignore");
-
-            return
-                (await powerShellContext
-                    .ExecuteCommand<PSObject>(command, false, false))
-                    .Select(o => o.BaseObject)
-                    .OfType<CommandInfo>()
-                    .FirstOrDefault();
+            return commandInfo;
         }
 
         /// <summary>
