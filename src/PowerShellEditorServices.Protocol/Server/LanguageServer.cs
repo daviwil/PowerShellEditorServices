@@ -22,6 +22,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using DebugAdapterMessages = Microsoft.PowerShell.EditorServices.Protocol.DebugAdapter;
 using System.Collections;
+using Newtonsoft.Json;
 
 namespace Microsoft.PowerShell.EditorServices.Protocol.Server
 {
@@ -108,6 +109,7 @@ namespace Microsoft.PowerShell.EditorServices.Protocol.Server
             this.SetRequestHandler(DocumentSymbolRequest.Type, this.HandleDocumentSymbolRequest);
             this.SetRequestHandler(WorkspaceSymbolRequest.Type, this.HandleWorkspaceSymbolRequest);
             this.SetRequestHandler(CodeActionRequest.Type, this.HandleCodeActionRequest);
+            this.SetRequestHandler(CodeLensRequest.Type, this.HandleCodeLensRequest);
 
             this.SetRequestHandler(ShowOnlineHelpRequest.Type, this.HandleShowOnlineHelpRequest);
             this.SetRequestHandler(ExpandAliasRequest.Type, this.HandleExpandAliasRequest);
@@ -185,6 +187,7 @@ namespace Microsoft.PowerShell.EditorServices.Protocol.Server
                         WorkspaceSymbolProvider = true,
                         HoverProvider = true,
                         CodeActionProvider = true,
+                        CodeLensProvider = new CodeLensOptions { ResolveProvider = true },
                         CompletionProvider = new CompletionOptions
                         {
                             ResolveProvider = true,
@@ -1136,6 +1139,71 @@ function __Expand-Alias {
 
             await requestContext.SendResult(
                 codeActionCommands.ToArray());
+        }
+
+        protected async Task HandleCodeLensRequest(
+            CodeLensRequest codeLensParams,
+            RequestContext<CodeLens[]> requestContext)
+        {
+            JsonSerializer jsonSerializer =
+                JsonSerializer.Create(
+                    Constants.JsonSerializerSettings);
+
+            var scriptFile =
+                editorSession.Workspace.GetFile(
+                    codeLensParams.TextDocument.Uri);
+
+            var symbols =
+                this.editorSession.LanguageService.FindSymbolsInFile(
+                    scriptFile);
+
+            List<CodeLens> codeLenses = new List<CodeLens>();
+            ScriptFile[] references = editorSession.Workspace.ExpandScriptReferences(scriptFile);
+
+            foreach (SymbolReference symbol in symbols.FoundOccurrences.Where(s => s.SymbolType == SymbolType.Function))
+            {
+                FindReferencesResult referencesResult =
+                    await editorSession.LanguageService.FindReferencesOfSymbol(
+                        symbol,
+                        references,
+                        editorSession.Workspace);
+
+                var range = GetRangeFromScriptRegion(symbol.ScriptRegion);
+                var referenceLocations =
+                    referencesResult
+                        .FoundReferences
+                        .Select(
+                            r => new Location
+                            {
+                                Uri = GetFileUri(r.FilePath),
+                                Range = GetRangeFromScriptRegion(r.ScriptRegion)
+                            })
+                        .ToArray();
+
+                codeLenses.Add(
+                    new CodeLens
+                    {
+                        Range = range,
+                        Command =
+                            new ServerCommand
+                            {
+                                Title =
+                                    referenceLocations.Length == 1
+                                    ? "1 reference"
+                                    : $"{referenceLocations.Length} references",
+                                Command = "editor.action.showReferences",
+                                Arguments =
+                                    new JToken[]
+                                    {
+                                        JValue.FromObject(codeLensParams.TextDocument.Uri, jsonSerializer),
+                                        JObject.FromObject(range.Start, jsonSerializer),
+                                        JArray.FromObject(referenceLocations, jsonSerializer)
+                                    }
+                            }
+                    });
+            }
+
+            await requestContext.SendResult(codeLenses.ToArray());
         }
 
         protected Task HandleEvaluateRequest(
