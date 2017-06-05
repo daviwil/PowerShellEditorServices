@@ -23,6 +23,7 @@ namespace Microsoft.PowerShell.EditorServices
     using System.Management.Automation.Runspaces;
     using Microsoft.PowerShell.EditorServices.Session.Capabilities;
     using System.IO;
+    using System.Management.Automation.Remoting;
 
     /// <summary>
     /// Manages the lifetime and usage of a PowerShell session.
@@ -518,6 +519,12 @@ namespace Microsoft.PowerShell.EditorServices
                                             throw e;
                                         }
                                     }
+                                    catch (PSRemotingDataStructureException e)
+                                    {
+                                        throw new RemoteException(
+                                            "Pipeline stopped due to a PSRemotingDataStructureException",
+                                            e);
+                                    }
 
                                     return result;
                                 },
@@ -550,17 +557,17 @@ namespace Microsoft.PowerShell.EditorServices
                 }
                 catch (PipelineStoppedException e)
                 {
-                    this.logger.Write(
-                        LogLevel.Error,
-                        "Pipeline stopped while executing command:\r\n\r\n" + e.ToString());
+                    this.logger.WriteException(
+                        "Pipeline stopped while executing command:",
+                        e);
 
                     errorMessages?.Append(e.Message);
                 }
                 catch (RuntimeException e)
                 {
-                    this.logger.Write(
-                        LogLevel.Error,
-                        "Runtime exception occurred while executing command:\r\n\r\n" + e.ToString());
+                    this.logger.WriteException(
+                        "Runtime exception occurred while executing command:",
+                        e);
 
                     hadErrors = true;
                     errorMessages?.Append(e.Message);
@@ -570,9 +577,18 @@ namespace Microsoft.PowerShell.EditorServices
                         // Write the error to the host
                         this.WriteExceptionToHost(e);
                     }
+
+                    this.OnExecutionStatusChanged(
+                        ExecutionStatus.Failed,
+                        executionOptions,
+                        true);
                 }
                 catch (Exception e)
                 {
+                    this.logger.WriteException(
+                        "Unhandled exception occurred while executing command:",
+                        e);
+
                     this.OnExecutionStatusChanged(
                         ExecutionStatus.Failed,
                         executionOptions,
