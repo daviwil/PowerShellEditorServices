@@ -1413,12 +1413,25 @@ function __Expand-Alias {
                         editorSession,
                         eventSender,
                         this.Logger,
-                        existingRequestCancellation.Token),
+                        existingRequestCancellation.Token)
+                    .ContinueWith(OnDelayThenInvokeDiagnosticsFinished),
                 CancellationToken.None,
                 TaskCreationOptions.None,
                 TaskScheduler.Default);
 
             return Task.FromResult(true);
+        }
+
+        private Task OnDelayThenInvokeDiagnosticsFinished(Task finishedTask)
+        {
+            if (finishedTask.IsFaulted)
+            {
+                this.Logger.WriteException(
+                    "DelayThenInvokeDiagnostics failed due to an exception",
+                    finishedTask.Exception);
+            }
+
+            return finishedTask;
         }
 
         private static async Task DelayThenInvokeDiagnostics(

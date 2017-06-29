@@ -78,6 +78,8 @@ namespace Microsoft.PowerShell.EditorServices.CodeLenses
                             })
                         .ToArray();
 
+            await Task.Delay(4000);
+
             return
                 new CodeLens(
                     codeLens,
