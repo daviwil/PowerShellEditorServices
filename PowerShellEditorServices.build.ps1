@@ -10,6 +10,8 @@ param(
 
 #Requires -Modules @{ModuleName="InvokeBuild";ModuleVersion="3.2.1"}
 
+Import-Module -Path "module\DotNetCli\DotNetCli.psd1"
+
 $script:IsCIBuild = $env:APPVEYOR -ne $null
 $script:IsUnix = $PSVersionTable.PSEdition -and $PSVersionTable.PSEdition -eq "Core" -and !$IsWindows
 $script:TargetFrameworksParam = "/p:TargetFrameworks=\`"$(if (!$script:IsUnix) { "net451;" })netstandard1.6\`""
@@ -21,64 +23,13 @@ if ($PSVersionTable.PSEdition -ne "Core") {
 task SetupDotNet -Before Restore, Clean, Build, TestHost, TestServer, TestProtocol, TestPowerShellApi, PackageNuGet {
 
     $requiredSdkVersion = "1.0.0"
-
     $dotnetPath = "$PSScriptRoot/.dotnet"
-    $dotnetExePath = if ($script:IsUnix) { "$dotnetPath/dotnet" } else { "$dotnetPath/dotnet.exe" }
-    $originalDotNetExePath = $dotnetExePath
 
-    if (!(Test-Path $dotnetExePath)) {
-        $installedDotnet = Get-Command dotnet -ErrorAction Ignore
-        if ($installedDotnet) {
-            $dotnetExePath = $installedDotnet.Source
-        }
-        else {
-            $dotnetExePath = $null
-        }
+    $dotNetSdk = Get-DotNetSdk -SdkVersion $requiredSdkVersion -InstallPath $dotnetPath
+
+    if (!$dotNetSdk) {
+        $dotNetSdk = Install-DotNetSdk -SdkVersion $requiredSdkVersion -InstallPath $dotnetPath
     }
-
-    # Make sure the dotnet we found is the right version
-    if ($dotnetExePath -and (& $dotnetExePath --version) -eq $requiredSdkVersion) {
-        $script:dotnetExe = $dotnetExePath
-    }
-    else {
-        # Clear the path so that we invoke installation
-        $script:dotnetExe = $null
-    }
-
-    if ($script:dotnetExe -eq $null) {
-
-        Write-Host "`n### Installing .NET CLI $requiredSdkVersion...`n" -ForegroundColor Green
-
-        # The install script is platform-specific
-        $installScriptExt = if ($script:IsUnix) { "sh" } else { "ps1" }
-
-        # Download the official installation script and run it
-        $installScriptPath = "$([System.IO.Path]::GetTempPath())dotnet-install.$installScriptExt"
-        Invoke-WebRequest "https://raw.githubusercontent.com/dotnet/cli/rel/1.0.0-rc3/scripts/obtain/dotnet-install.$installScriptExt" -OutFile $installScriptPath
-        $env:DOTNET_INSTALL_DIR = "$PSScriptRoot/.dotnet"
-
-        if (!$script:IsUnix) {
-            & $installScriptPath -Version $requiredSdkVersion -InstallDir "$env:DOTNET_INSTALL_DIR"
-        }
-        else {
-            & /bin/bash $installScriptPath -Version $requiredSdkVersion -InstallDir "$env:DOTNET_INSTALL_DIR"
-            $env:PATH = $dotnetExeDir + [System.IO.Path]::PathSeparator + $env:PATH
-        }
-
-        Write-Host "`n### Installation complete." -ForegroundColor Green
-        $script:dotnetExe = $originalDotnetExePath
-    }
-
-    # This variable is used internally by 'dotnet' to know where it's installed
-    $script:dotnetExe = Resolve-Path $script:dotnetExe
-    if (!$env:DOTNET_INSTALL_DIR)
-    {
-        $dotnetExeDir = [System.IO.Path]::GetDirectoryName($script:dotnetExe)
-        $env:PATH = $dotnetExeDir + [System.IO.Path]::PathSeparator + $env:PATH
-        $env:DOTNET_INSTALL_DIR = $dotnetExeDir
-    }
-
-    Write-Host "`n### Using dotnet v$requiredSDKVersion at path $script:dotnetExe`n" -ForegroundColor Green
 }
 
 function NeedsRestore($rootPath) {
@@ -91,7 +42,7 @@ function NeedsRestore($rootPath) {
 }
 
 task Restore -If { "Restore" -in $BuildTask -or (NeedsRestore(".\src")) -or (NeedsRestore(".\test")) } -Before Clean, Build, Test {
-    exec { & $script:dotnetExe restore }
+    exec { & Invoke-DotNetCli restore }
 }
 
 task Clean {
