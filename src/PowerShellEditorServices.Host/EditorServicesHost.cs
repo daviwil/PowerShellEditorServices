@@ -376,6 +376,8 @@ namespace Microsoft.PowerShell.EditorServices.Host
             CodeLensFeature.Create(editorSession.Components, editorSession);
             DocumentSymbolFeature.Create(editorSession.Components, editorSession);
 
+            IntegrationFeature.Create(editorSession.Components, editorSession);
+
             return editorSession;
         }
 
